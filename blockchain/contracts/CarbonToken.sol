@@ -20,4 +20,11 @@ contract CarbonToken is ERC20, Ownable {
     function retireCredits(address company, uint256 amount) public onlyOwner {
         _burn(company, amount);
     }
+
+    mapping(address => uint256) public reputationScore;
+
+// Function to update score after Phase 2
+function updateReputation(address _company, uint256 _newScore) external onlyOwner {
+    reputationScore[_company] = _newScore;
+}
 }

@@ -10,6 +10,20 @@ from web3 import Web3
 import os
 from dotenv import load_dotenv
 from web3 import Web3
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+# 1. Initialize the app FIRST
+app = FastAPI()
+
+# 2. THEN add the middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Load variables from .env
 load_dotenv()
@@ -27,7 +41,7 @@ else:
 load_dotenv()
 
 # Initialize FastAPI only ONCE
-app = FastAPI()
+
 
 # Ensure upload directory exists
 os.makedirs("uploads", exist_ok=True)
@@ -142,15 +156,131 @@ async def mint_initial_credits(company_name: str, wallet_address: str, file: Upl
 
 @app.get("/leaderboard")
 async def get_leaderboard():
-    cursor = companies_col.find().sort("initial_allowance", -1).limit(10)
-    rankings = []
-    async for doc in cursor:
-        allowance = doc.get("initial_allowance", 0)
-        consumed = doc.get("last_verified_consumption", 0)
-        surplus = allowance - consumed
-        rankings.append({
-            "company": doc["name"],
-            "balance": surplus,
-            "compliance": "GREEN" if surplus >= 0 else "RED"
+    """
+    Ranks companies based on their remaining carbon allowance and calculates reputation.
+    """
+    try:
+        # Fetch all companies from the collection, sorted by allowance
+        cursor = companies_col.find().sort("initial_allowance", -1)
+        
+        rankings = []
+        async for doc in cursor:
+            # 1. Basic Data Extraction
+            allowance = doc.get("initial_allowance", 0)
+            consumed = doc.get("last_verified_consumption", 0)
+            surplus = allowance - consumed
+            
+            # 2. Reputation Calculation Logic
+            # Accuracy rate: How much of their allowance did they actually use?
+            accuracy_rate = (consumed / allowance) if allowance > 0 else 0
+
+            # Assign Grades based on behavioral efficiency
+            if accuracy_rate <= 0.9 and doc.get("status") == "audited":
+                reputation = "AAA (Excellent)" # High efficiency, audit completed
+            elif accuracy_rate <= 1.0:
+                reputation = "AA (Good)"      # Within limits
+            else:
+                reputation = "B (At Risk)"    # Exceeded allowance
+            
+            # 3. Build the response object
+            rankings.append({
+                "company": doc.get("name", "Unknown"),
+                "wallet": doc.get("wallet_address", "N/A"),
+                "total_allowance": allowance,
+                "actual_used": consumed,
+                "net_surplus": surplus,
+                "reputation_grade": reputation, # New field for your dashboard
+                "status": doc.get("status", "pending"),
+                "is_compliant": surplus >= 0
+            })
+        
+        # Sort the list so the best surplus is at the top
+        rankings.sort(key=lambda x: x['net_surplus'], reverse=True)
+        
+        from datetime import datetime
+        return {
+            "timestamp": datetime.utcnow(),
+            "total_companies": len(rankings),
+            "leaderboard": rankings
+        }
+    except Exception as e:
+        print(f"Leaderboard Error: {e}")
+        return {"status": "ERROR", "message": str(e)}
+
+@app.post("/phase2-settlement/{company_name}")
+async def verify_and_settle(company_name: str, file: UploadFile = File(...)):
+    # 1. FETCH COMPANY DATA FROM MONGODB
+    company_data = await companies_col.find_one({"name": company_name})
+    if not company_data:
+        raise HTTPException(status_code=404, detail="Company not found. Phase 1 must be completed first.")
+
+    # 2. SAVE AUDIT REPORT & RUN OCR
+    file_path = f"uploads/audit_{file.filename}"
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+    
+    # Import inside the route to ensure it's loaded properly
+    from ocr_engine import extract_carbon_value
+    actual_consumption = extract_carbon_value(file_path)
+    
+    # 3. BLOCKCHAIN RETIREMENT (BURN)
+    try:
+        if not PRIVATE_KEY:
+            raise ValueError("PRIVATE_KEY is missing from environment variables.")
+
+        admin_account = w3.eth.account.from_key(PRIVATE_KEY)
+        # Ensure the wallet address is in Checksum format
+        company_wallet = Web3.to_checksum_address(company_data["wallet_address"])
+        
+        # Build the retirement (burn) transaction
+        txn = contract.functions.retireCredits(
+            company_wallet, 
+            int(actual_consumption)
+        ).build_transaction({
+            'chainId': 31337,
+            'gas': 200000,
+            'gasPrice': w3.eth.gas_price,
+            'nonce': w3.eth.get_transaction_count(admin_account.address),
+            'from': admin_account.address
         })
-    return {"leaderboard": rankings}
+        
+        # Sign the transaction
+        signed = w3.eth.account.sign_transaction(txn, PRIVATE_KEY)
+        
+        # FLEXIBLE ATTRIBUTE CHECK: Fixes 'rawTransaction' vs 'raw_transaction' error
+        raw_tx = getattr(signed, 'raw_transaction', getattr(signed, 'rawTransaction', None))
+        
+        if raw_tx is None:
+            raise AttributeError("Could not find 'raw_transaction' or 'rawTransaction' on the signed object.")
+
+        # Send the raw transaction
+        tx_hash = w3.eth.send_raw_transaction(raw_tx)
+        
+        # Wait for block confirmation on your local Hardhat node
+        w3.eth.wait_for_transaction_receipt(tx_hash)
+        
+        # 4. UPDATE DATABASE STATUS
+        allowance = company_data.get("initial_allowance", 0)
+        surplus = allowance - actual_consumption
+        
+        await companies_col.update_one(
+            {"name": company_name},
+            {"$set": {
+                "last_verified_consumption": actual_consumption,
+                "status": "audited",
+                "compliance_result": "SUCCESS" if surplus >= 0 else "FAIL",
+                "settlement_tx": tx_hash.hex()
+            }}
+        )
+
+        return {
+            "status": "SETTLEMENT_COMPLETE",
+            "company": company_name,
+            "retired_tons": actual_consumption,
+            "remaining_balance": surplus,
+            "blockchain_tx": tx_hash.hex()
+        }
+
+    except Exception as e:
+        print(f"Phase 2 Blockchain Error: {e}")
+        return {"status": "ERROR", "message": str(e)}
