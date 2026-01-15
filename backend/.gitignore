@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+.env
+venv/
+.pyenv/
+
+# Project Specific
+backend/uploads/*
+!backend/uploads/.gitkeep
+
+# OS
+.DS_Store
+
+# Blockchain (for tomorrow)
+node_modules/
+artifacts/
+cache/
