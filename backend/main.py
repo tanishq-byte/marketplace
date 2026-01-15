@@ -9,7 +9,7 @@ app = FastAPI()
 
 
 # 1. MongoDB Configuration
-MONGO_DETAILS = "mongodb+srv://carbon:<vvlOOrIv5dgmKRPX>@carboncred.3ifjahc.mongodb.net/?appName=carboncred" # Replace with your Atlas URI if needed
+MONGO_DETAILS = "mongodb+srv://carbon:vvlOOrIv5dgmKRPX@carboncred.3ifjahc.mongodb.net/?appName=carboncred" # Replace with your Atlas URI if needed
 client = AsyncIOMotorClient(MONGO_DETAILS)
 db = client.carbon_cred_db
 companies_col = db.get_collection("companies")
