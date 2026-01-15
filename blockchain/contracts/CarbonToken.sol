@@ -27,4 +27,24 @@ contract CarbonToken is ERC20, Ownable {
 function updateReputation(address _company, uint256 _newScore) external onlyOwner {
     reputationScore[_company] = _newScore;
 }
+    function tradeCredits(address _to, uint256 _amount) public {
+    require(balanceOf(msg.sender) >= _amount, "Insufficient credits to sell");
+    _transfer(msg.sender, _to, _amount);
+}
+    mapping(address => uint256) public listings;
+uint256 public totalMarketSupply;
+
+function listForSale(uint256 _amount) public {
+    require(balanceOf(msg.sender) >= _amount, "Not enough credits");
+    _transfer(msg.sender, address(this), _amount); // Move to Escrow
+    listings[msg.sender] += _amount;
+    totalMarketSupply += _amount;
+}
+
+function buyFromMarket(uint256 _amount) public {
+    require(totalMarketSupply >= _amount, "Market supply too low");
+    // Logic to loop through sellers and distribute credits goes here
+    _transfer(address(this), msg.sender, _amount);
+    totalMarketSupply -= _amount;
+}
 }
