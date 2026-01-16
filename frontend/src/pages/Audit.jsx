@@ -1,0 +1,825 @@
+import React, { useState } from 'react';
+import { Search, FileCheck, AlertTriangle, CheckCircle, Clock, DollarSign, Shield, TrendingDown, ExternalLink, Eye, EyeOff, XCircle, Upload } from 'lucide-react';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
+import { Progress } from '@/components/ui/progress';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+
+const Audit = () => {
+  const [companyName, setCompanyName] = useState('');
+  const [companyData, setCompanyData] = useState(null);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [file, setFile] = useState(null);
+  const [auditResult, setAuditResult] = useState(null);
+  const [processing, setProcessing] = useState(false);
+  const [error, setError] = useState('');
+  const [showWallet, setShowWallet] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+
+  const API_BASE = 'http://localhost:8000';
+
+  // Function to search for company data
+  const handleSearch = async () => {
+    if (!companyName.trim()) {
+      setError('Please enter a company name');
+      return;
+    }
+
+    setSearchLoading(true);
+    setError('');
+    setCompanyData(null);
+    setAuditResult(null);
+    setFile(null);
+
+    try {
+      // Try to get company data
+      const response = await fetch(`${API_BASE}/api/companies/${encodeURIComponent(companyName)}`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (response.status === 404) {
+        setError('Company not found. Please verify the company name.');
+      } else if (response.ok) {
+        const data = await response.json();
+        setCompanyData(data);
+      } else {
+        throw new Error(`Failed to fetch company data: ${response.status}`);
+      }
+    } catch (err) {
+      console.error('Search error:', err);
+      setError('Failed to search for company. Please try again.');
+    } finally {
+      setSearchLoading(false);
+    }
+  };
+
+  const handleFileChange = (selectedFile) => {
+    if (selectedFile) {
+      if (selectedFile.type === 'application/pdf') {
+        // Check file size (10MB limit)
+        if (selectedFile.size > 10 * 1024 * 1024) {
+          setError('File size must be less than 10MB');
+          return;
+        }
+        setFile(selectedFile);
+        setError('');
+      } else {
+        setError('Please upload a PDF file only');
+      }
+    }
+  };
+
+  const handleFileInputChange = (e) => {
+    const selectedFile = e.target.files[0];
+    handleFileChange(selectedFile);
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    setDragOver(true);
+  };
+
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    setDragOver(false);
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    setDragOver(false);
+    
+    const droppedFile = e.dataTransfer.files[0];
+    handleFileChange(droppedFile);
+  };
+
+  const removeFile = () => {
+    setFile(null);
+    const fileInput = document.getElementById('auditReport');
+    if (fileInput) {
+      fileInput.value = '';
+    }
+  };
+
+  const handleFileButtonClick = () => {
+    document.getElementById('auditReport').click();
+  };
+
+  const simulateProgress = () => {
+    let progress = 0;
+    const interval = setInterval(() => {
+      progress += 10;
+      setUploadProgress(progress);
+      if (progress >= 90) {
+        clearInterval(interval);
+      }
+    }, 200);
+    return interval;
+  };
+
+  const handleAuditSubmit = async () => {
+    if (!companyData || !file) {
+      setError('Please search for a company and upload audit report');
+      return;
+    }
+
+    setProcessing(true);
+    setError('');
+    setAuditResult(null);
+    setUploadProgress(0);
+    
+    // Start progress simulation
+    const progressInterval = simulateProgress();
+    
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      
+      console.log('Submitting audit for:', {
+        company: companyData.name,
+        fileName: file.name,
+        fileSize: file.size,
+        fileType: file.type
+      });
+
+      const response = await fetch(`${API_BASE}/phase2-settlement/${encodeURIComponent(companyData.name)}`, {
+        method: 'POST',
+        body: formData,
+      });
+      
+      console.log('Response status:', response.status);
+      
+      const result = await response.json();
+      console.log('Response data:', result);
+      
+      if (response.ok) {
+        // Clear progress interval and set to 100%
+        clearInterval(progressInterval);
+        setUploadProgress(100);
+        
+        // Format the result to match frontend expectations
+        setAuditResult({
+          status: result.status || 'SETTLEMENT_PROCESSED',
+          company: companyData.name,
+          blockchain_status: result.blockchain_status || 'SUCCESS',
+          net_surplus: result.net_surplus || 0,
+          message: result.message || 'Audit processed successfully',
+          
+          // Calculate additional fields from backend response
+          allowance: companyData.initial_allowance || 0,
+          actualConsumption: result.actual_consumption || companyData.last_verified_consumption || 0,
+          penaltyApplied: result.net_surplus < 0,
+          penaltyTons: result.penalty_tons || (result.net_surplus < 0 ? Math.abs(result.net_surplus) * 0.5 : 0),
+          totalRetirement: result.total_retirement_needed || ((result.actual_consumption || 0) + (result.penalty_tons || 0)),
+          surplus: result.net_surplus || 0,
+          blockchain_tx: result.settlement_tx || result.blockchain_tx || result.transactionHash,
+          timestamp: new Date().toISOString()
+        });
+        
+        // Clear file after successful submission
+        setFile(null);
+        const fileInput = document.getElementById('auditReport');
+        if (fileInput) fileInput.value = '';
+      } else {
+        // Try to get detailed error message
+        let errorMessage = `Audit failed (${response.status}): `;
+        if (result.detail) {
+          if (Array.isArray(result.detail)) {
+            errorMessage += result.detail.map(d => d.msg).join(', ');
+          } else {
+            errorMessage += result.detail;
+          }
+        } else if (result.message) {
+          errorMessage += result.message;
+        } else {
+          errorMessage += 'Unknown error';
+        }
+        setError(errorMessage);
+        setUploadProgress(0);
+      }
+    } catch (err) {
+      console.error('Audit submission error:', err);
+      setError(`Network error: ${err.message}. Please check your connection and try again.`);
+      setUploadProgress(0);
+    } finally {
+      clearInterval(progressInterval);
+      setProcessing(false);
+    }
+  };
+
+  const handleBuyCredits = () => {
+    // In real app, this would open marketplace or connect to wallet
+    alert('Redirecting to carbon credit marketplace...');
+    // window.open('/marketplace', '_blank');
+  };
+
+  const handleTabSwitch = (value) => {
+    if (value === 'audit' && !companyData) {
+      setError('Please search and select a company first');
+      return false;
+    }
+    return true;
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-purple-50 p-4 md:p-8">
+      <div className="max-w-6xl mx-auto">
+        {/* Header */}
+        <div className="mb-10">
+          <h1 className="text-4xl font-bold text-gray-900 mb-3 flex items-center gap-3">
+            <FileCheck className="h-10 w-10 text-purple-600" />
+            Audit & Settlement Phase
+          </h1>
+          <p className="text-gray-600 text-lg">
+            Verify actual carbon consumption and settle credits on the blockchain
+          </p>
+        </div>
+
+        <Tabs defaultValue="search" className="space-y-8">
+          <TabsList className="grid w-full max-w-md grid-cols-2">
+            <TabsTrigger value="search" onClick={() => setError('')}>Search Company</TabsTrigger>
+            <TabsTrigger 
+              value="audit" 
+              disabled={!companyData}
+              onClick={() => handleTabSwitch('audit')}
+            >
+              Process Audit
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="search" className="space-y-6">
+            <Card className="shadow-lg border-0">
+              <CardHeader>
+                <CardTitle className="text-2xl flex items-center gap-2">
+                  <Search className="h-6 w-6" />
+                  Find Company Record
+                </CardTitle>
+                <CardDescription>
+                  Search for a company to view their current carbon allowance and status
+                </CardDescription>
+              </CardHeader>
+              
+              <CardContent>
+                <div className="space-y-6">
+                  <div className="flex gap-4">
+                    <div className="flex-1">
+                      <Label htmlFor="searchCompany">Company Name *</Label>
+                      <Input
+                        id="searchCompany"
+                        value={companyName}
+                        onChange={(e) => {
+                          setCompanyName(e.target.value);
+                          setCompanyData(null);
+                          setAuditResult(null);
+                          setFile(null);
+                          setError('');
+                        }}
+                        placeholder="Enter exact company name as registered"
+                        className="mt-1 h-12"
+                        onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
+                        disabled={searchLoading}
+                      />
+                    </div>
+                    <div className="flex items-end">
+                      <Button 
+                        onClick={handleSearch} 
+                        disabled={searchLoading || !companyName.trim()}
+                        className="h-12 px-8 bg-gradient-to-r from-purple-600 to-indigo-600"
+                      >
+                        {searchLoading ? (
+                          <div className="flex items-center gap-2">
+                            <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                            Searching...
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2">
+                            <Search className="h-4 w-4" />
+                            Search
+                          </div>
+                        )}
+                      </Button>
+                    </div>
+                  </div>
+
+                  {error && (
+                    <Alert variant="destructive" className="animate-in slide-in-from-top duration-300">
+                      <AlertTriangle className="h-4 w-4" />
+                      <AlertDescription className="font-medium">{error}</AlertDescription>
+                    </Alert>
+                  )}
+
+                  {companyData && (
+                    <Card className="bg-gradient-to-r from-gray-50 to-blue-50 border-2 border-blue-200 animate-in fade-in duration-500">
+                      <CardContent className="pt-6">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                          <div>
+                            <div className="flex items-center justify-between mb-4">
+                              <h3 className="text-xl font-bold text-gray-900">{companyData.name}</h3>
+                              <Badge className={
+                                companyData.status === 'active' ? 'bg-green-100 text-green-800' :
+                                companyData.status === 'audited' ? 'bg-blue-100 text-blue-800' :
+                                companyData.status === 'deficit' ? 'bg-red-100 text-red-800' :
+                                'bg-yellow-100 text-yellow-800'
+                              }>
+                                {companyData.status || 'unknown'}
+                              </Badge>
+                            </div>
+                            <div className="space-y-3">
+                              <div className="flex justify-between items-center">
+                                <span className="text-gray-600">Wallet Address:</span>
+                                <div className="flex items-center gap-2">
+                                  <span className="font-mono text-sm">
+                                    {showWallet 
+                                      ? (companyData.wallet_address || 'N/A') 
+                                      : `${(companyData.wallet_address || '0x').slice(0, 6)}...${(companyData.wallet_address || '').slice(-4)}`}
+                                  </span>
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => setShowWallet(!showWallet)}
+                                    className="h-6 w-6 p-0"
+                                  >
+                                    {showWallet ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+                                  </Button>
+                                </div>
+                              </div>
+                              <div className="flex justify-between">
+                                <span className="text-gray-600">Initial Allowance:</span>
+                                <span className="font-bold text-green-700">{companyData.initial_allowance || 0} tons</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span className="text-gray-600">Last Verified Consumption:</span>
+                                <span className="font-semibold">{companyData.last_verified_consumption || 0} tons</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span className="text-gray-600">Minted On:</span>
+                                <span>{companyData.minted_at ? new Date(companyData.minted_at).toLocaleDateString() : 'N/A'}</span>
+                              </div>
+                              {companyData.net_surplus !== undefined && (
+                                <div className="flex justify-between">
+                                  <span className="text-gray-600">Current Surplus:</span>
+                                  <span className={`font-bold ${(companyData.net_surplus || 0) >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+                                    {(companyData.net_surplus || 0) >= 0 ? '+' : ''}{companyData.net_surplus || 0} tons
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                          
+                          <div className="space-y-4">
+                            <div className="text-center">
+                              <p className="text-sm text-gray-600 mb-2">
+                                {companyData.status === 'audited' ? 'Audit Complete' : 
+                                 companyData.status === 'active' ? 'Ready for Audit' : 
+                                 'Status'}
+                              </p>
+                              <Progress 
+                                value={companyData.status === 'audited' ? 100 : 
+                                       companyData.status === 'active' ? 50 : 0} 
+                                className="h-2"
+                              />
+                              <p className="text-xs text-gray-500 mt-2">
+                                {companyData.status === 'audited' ? 'Company has been audited and settled' : 
+                                 companyData.status === 'active' ? 'Ready for Phase 2 audit' : 
+                                 'Company status unknown'}
+                              </p>
+                            </div>
+                            
+                            <Alert className="bg-blue-50 border-blue-200">
+                              <Clock className="h-4 w-4 text-blue-600" />
+                              <AlertDescription className="text-blue-700">
+                                {companyData.status === 'active' 
+                                  ? 'This company is ready for Phase 2 audit. Upload their actual consumption report.'
+                                  : companyData.status === 'audited'
+                                  ? 'This company has already been audited. You can audit them again with new data.'
+                                  : 'Company status needs verification.'}
+                              </AlertDescription>
+                            </Alert>
+
+                            <div className="text-center">
+                              <Button 
+                                onClick={() => {
+                                  const auditTab = document.querySelector('[data-value="audit"]');
+                                  if (auditTab) auditTab.click();
+                                }}
+                                className="w-full bg-gradient-to-r from-purple-600 to-indigo-600"
+                              >
+                                Proceed to Audit
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="audit" className="space-y-6">
+            <Card className="shadow-lg border-0">
+              <CardHeader>
+                <CardTitle className="text-2xl flex items-center gap-2">
+                  <FileCheck className="h-6 w-6" />
+                  Upload Audit Report
+                </CardTitle>
+                <CardDescription>
+                  Upload the verified consumption report for blockchain settlement
+                </CardDescription>
+              </CardHeader>
+              
+              <CardContent className="space-y-8">
+                {!companyData ? (
+                  <Alert>
+                    <AlertTriangle className="h-4 w-4" />
+                    <AlertDescription>
+                      Please search and select a company first from the "Search Company" tab.
+                    </AlertDescription>
+                  </Alert>
+                ) : (
+                  <>
+                    {/* Current Status */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                      <Card>
+                        <CardContent className="pt-6">
+                          <div className="text-center">
+                            <p className="text-sm text-gray-500 mb-2">Allowance</p>
+                            <p className="text-3xl font-bold text-green-700">{companyData.initial_allowance || 0} tons</p>
+                          </div>
+                        </CardContent>
+                      </Card>
+                      
+                      <Card>
+                        <CardContent className="pt-6">
+                          <div className="text-center">
+                            <p className="text-sm text-gray-500 mb-2">Previous Audit</p>
+                            <p className="text-3xl font-bold text-blue-700">{companyData.last_verified_consumption || 0} tons</p>
+                          </div>
+                        </CardContent>
+                      </Card>
+                      
+                      <Card>
+                        <CardContent className="pt-6">
+                          <div className="text-center">
+                            <p className="text-sm text-gray-500 mb-2">Status</p>
+                            <Badge className="bg-purple-100 text-purple-800 text-lg px-4 py-1">
+                              {(companyData.status || 'UNKNOWN').toUpperCase()}
+                            </Badge>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    </div>
+
+                    {/* File Upload */}
+                    <div>
+                      <Label className="text-lg">Upload Actual Consumption Report (PDF) *</Label>
+                      
+                      {/* Hidden file input */}
+                      <Input
+                        type="file"
+                        accept=".pdf"
+                        onChange={handleFileInputChange}
+                        className="hidden"
+                        id="auditReport"
+                        disabled={processing}
+                      />
+                      
+                      {/* Clickable upload area */}
+                      <div 
+                        className={`mt-2 border-2 border-dashed rounded-lg p-8 text-center transition-all ${
+                          processing ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'
+                        } ${
+                          dragOver 
+                            ? 'border-purple-500 bg-purple-50' 
+                            : 'border-gray-300 hover:border-purple-400 hover:bg-gray-50'
+                        }`}
+                        onClick={processing ? null : handleFileButtonClick}
+                        onDragOver={processing ? null : handleDragOver}
+                        onDragLeave={processing ? null : handleDragLeave}
+                        onDrop={processing ? null : handleDrop}
+                      >
+                        {file ? (
+                          <div className="space-y-4">
+                            <div className="flex items-center justify-center gap-3">
+                              <CheckCircle className="h-12 w-12 text-green-500" />
+                              <div className="text-left">
+                                <p className="font-medium text-gray-900">{file.name}</p>
+                                <p className="text-sm text-gray-500">
+                                  {(file.size / 1024).toFixed(2)} KB
+                                </p>
+                              </div>
+                            </div>
+                            <Button
+                              type="button"
+                              variant="destructive"
+                              size="sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                removeFile();
+                              }}
+                              className="mt-2"
+                              disabled={processing}
+                            >
+                              <XCircle className="h-4 w-4 mr-2" />
+                              Remove File
+                            </Button>
+                          </div>
+                        ) : (
+                          <>
+                            <Upload className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+                            <p className="text-gray-600 mb-4">
+                              Click to upload or drag and drop
+                            </p>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleFileButtonClick();
+                              }}
+                              disabled={processing}
+                            >
+                              Choose File
+                            </Button>
+                            <p className="text-xs text-gray-500 mt-4">
+                              PDF files only • Max 10MB
+                            </p>
+                          </>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Progress indicator */}
+                    {processing && (
+                      <div className="space-y-2 animate-in fade-in duration-300">
+                        <div className="flex justify-between text-sm">
+                          <span className="font-medium">Processing Audit...</span>
+                          <span className="font-bold">{uploadProgress}%</span>
+                        </div>
+                        <Progress value={uploadProgress} className="h-2" />
+                        <div className="flex justify-between text-xs text-gray-500">
+                          <span>Extracting consumption data...</span>
+                          <span>Settling credits...</span>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Error Display */}
+                    {error && (
+                      <Alert variant="destructive" className="animate-in slide-in-from-top duration-300">
+                        <AlertTriangle className="h-4 w-4" />
+                        <AlertDescription className="font-medium">{error}</AlertDescription>
+                      </Alert>
+                    )}
+
+                    {/* Penalty Warning */}
+                    <Dialog>
+                      <DialogTrigger asChild>
+                        <Button variant="outline" className="w-full">
+                          <AlertTriangle className="h-4 w-4 mr-2" />
+                          View Penalty System Details
+                        </Button>
+                      </DialogTrigger>
+                      <DialogContent>
+                        <DialogHeader>
+                          <DialogTitle>Penalty System</DialogTitle>
+                          <DialogDescription>
+                            How penalties are calculated for exceeding carbon allowance
+                          </DialogDescription>
+                        </DialogHeader>
+                        <div className="space-y-4">
+                          <div className="p-4 bg-yellow-50 rounded-lg">
+                            <h4 className="font-semibold text-yellow-800 mb-2">⚠️ Important: 1.5x Penalty Multiplier</h4>
+                            <p className="text-yellow-700 text-sm">
+                              Companies that exceed their allowance incur a 1.5x penalty on the excess amount.
+                            </p>
+                          </div>
+                          <div className="space-y-2">
+                            <h4 className="font-semibold">Example Calculation:</h4>
+                            <div className="text-sm space-y-1">
+                              <p>• Allowance: 1000 tons</p>
+                              <p>• Actual Consumption: 1100 tons</p>
+                              <p>• Excess: 100 tons</p>
+                              <p>• Penalty: 100 × 1.5 = 150 tons</p>
+                              <p>• Total to Burn: 1100 + 150 = 1250 tons</p>
+                            </div>
+                          </div>
+                        </div>
+                      </DialogContent>
+                    </Dialog>
+
+                    {/* Action Buttons */}
+                    <div className="flex gap-4">
+                      <Button 
+                        onClick={handleAuditSubmit}
+                        disabled={!file || processing}
+                        className="flex-1 h-12 text-lg bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700"
+                      >
+                        {processing ? (
+                          <div className="flex items-center gap-2">
+                            <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                            Processing Audit...
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2">
+                            <Shield className="h-5 w-5" />
+                            Process Audit & Settle
+                          </div>
+                        )}
+                      </Button>
+                    </div>
+                  </>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Audit Results */}
+            {auditResult && (
+              <Card className="shadow-lg border-0 bg-gradient-to-br from-gray-50 to-purple-50 animate-in slide-in-from-right duration-500">
+                <CardHeader>
+                  <CardTitle className="text-2xl flex items-center gap-2">
+                    <FileCheck className="h-6 w-6" />
+                    Audit Results
+                  </CardTitle>
+                </CardHeader>
+                
+                <CardContent>
+                  <div className="space-y-6">
+                    {/* Status Alert */}
+                    <Alert className={
+                      auditResult.blockchain_status === 'SUCCESS' 
+                        ? 'bg-green-50 border-green-200' 
+                        : auditResult.blockchain_status === 'DEFICIT_LOCKED'
+                        ? 'bg-red-50 border-red-200'
+                        : 'bg-yellow-50 border-yellow-200'
+                    }>
+                      {auditResult.blockchain_status === 'SUCCESS' ? (
+                        <CheckCircle className="h-4 w-4 text-green-600" />
+                      ) : (
+                        <AlertTriangle className="h-4 w-4 text-red-600" />
+                      )}
+                      <AlertTitle className={
+                        auditResult.blockchain_status === 'SUCCESS' ? 'text-green-700' : 'text-red-700'
+                      }>
+                        {auditResult.status || 'Audit Complete'}
+                      </AlertTitle>
+                      <AlertDescription className={
+                        auditResult.blockchain_status === 'SUCCESS' ? 'text-green-700' : 'text-red-700'
+                      }>
+                        {auditResult.message}
+                      </AlertDescription>
+                    </Alert>
+
+                    {/* Results Grid */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                      <Card>
+                        <CardContent className="pt-6">
+                          <p className="text-sm text-gray-500 mb-2">Actual Consumption</p>
+                          <p className="text-2xl font-bold text-gray-900">{auditResult.actualConsumption} tons</p>
+                        </CardContent>
+                      </Card>
+                      
+                      <Card>
+                        <CardContent className="pt-6">
+                          <p className="text-sm text-gray-500 mb-2">Penalty Applied</p>
+                          <p className="text-2xl font-bold text-red-700">
+                            {auditResult.penaltyApplied ? `${auditResult.penaltyTons.toFixed(1)} tons` : 'None'}
+                          </p>
+                        </CardContent>
+                      </Card>
+                      
+                      <Card>
+                        <CardContent className="pt-6">
+                          <p className="text-sm text-gray-500 mb-2">Total to Burn</p>
+                          <p className="text-2xl font-bold text-orange-700">{auditResult.totalRetirement.toFixed(1)} tons</p>
+                        </CardContent>
+                      </Card>
+                      
+                      <Card className={
+                        auditResult.surplus >= 0 
+                          ? 'bg-green-50 border-green-200' 
+                          : 'bg-red-50 border-red-200'
+                      }>
+                        <CardContent className="pt-6">
+                          <p className="text-sm text-gray-500 mb-2">Net Surplus/Deficit</p>
+                          <p className={`text-2xl font-bold ${
+                            auditResult.surplus >= 0 ? 'text-green-700' : 'text-red-700'
+                          }`}>
+                            {auditResult.surplus >= 0 ? '+' : ''}{auditResult.surplus.toFixed(1)} tons
+                          </p>
+                        </CardContent>
+                      </Card>
+                    </div>
+
+                    {/* Blockchain Info */}
+                    {auditResult.blockchain_tx && auditResult.blockchain_tx !== 'AWAITING_FUNDS' && auditResult.blockchain_tx !== 'null' && (
+                      <Card>
+                        <CardContent className="pt-6">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <p className="text-sm text-gray-500 mb-2">Transaction Hash</p>
+                              <div className="font-mono text-sm bg-gray-100 p-2 rounded break-all">
+                                {auditResult.blockchain_tx}
+                              </div>
+                            </div>
+                            <div className="flex gap-2">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  navigator.clipboard.writeText(auditResult.blockchain_tx);
+                                  alert('Transaction hash copied to clipboard!');
+                                }}
+                              >
+                                Copy
+                              </Button>
+                              <Button variant="outline" size="sm" className="gap-2">
+                                View on Explorer
+                                <ExternalLink className="h-3 w-3" />
+                              </Button>
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    )}
+
+                    {/* Deficit Actions */}
+                    {auditResult.surplus < 0 && (
+                      <Card className="bg-red-50 border-red-200">
+                        <CardContent className="pt-6">
+                          <div className="flex flex-col md:flex-row items-center justify-between gap-4">
+                            <div className="flex items-center gap-3">
+                              <TrendingDown className="h-8 w-8 text-red-600" />
+                              <div>
+                                <h3 className="font-bold text-red-800">Credit Deficit Detected</h3>
+                                <p className="text-red-700 text-sm">
+                                  Company needs to purchase {Math.abs(auditResult.surplus).toFixed(1)} tons of carbon credits
+                                </p>
+                              </div>
+                            </div>
+                            <Button 
+                              onClick={handleBuyCredits}
+                              className="bg-gradient-to-r from-red-600 to-orange-600 hover:from-red-700 hover:to-orange-700 gap-2"
+                            >
+                              <DollarSign className="h-4 w-4" />
+                              Buy Credits from Market
+                            </Button>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    )}
+
+                    {/* Summary */}
+                    <div className="space-y-3">
+                      <h3 className="font-bold text-gray-900">Audit Summary</h3>
+                      <ul className="space-y-2 text-gray-600">
+                        <li className="flex items-start gap-2">
+                          <div className="h-5 w-5 rounded-full bg-green-100 text-green-800 flex items-center justify-center flex-shrink-0">
+                            ✓
+                          </div>
+                          <span>Company: {auditResult.company}</span>
+                        </li>
+                        <li className="flex items-start gap-2">
+                          <div className="h-5 w-5 rounded-full bg-blue-100 text-blue-800 flex items-center justify-center flex-shrink-0">
+                            📊
+                          </div>
+                          <span>Blockchain Status: {auditResult.blockchain_status}</span>
+                        </li>
+                        <li className="flex items-start gap-2">
+                          <div className="h-5 w-5 rounded-full bg-purple-100 text-purple-800 flex items-center justify-center flex-shrink-0">
+                            ⚖️
+                          </div>
+                          <span>Net Result: {auditResult.surplus >= 0 ? 'Surplus' : 'Deficit'} of {Math.abs(auditResult.surplus).toFixed(1)} tons</span>
+                        </li>
+                        {auditResult.blockchain_tx && auditResult.blockchain_tx !== 'AWAITING_FUNDS' && auditResult.blockchain_tx !== 'null' && (
+                          <li className="flex items-start gap-2">
+                            <div className="h-5 w-5 rounded-full bg-indigo-100 text-indigo-800 flex items-center justify-center flex-shrink-0">
+                              🔗
+                            </div>
+                            <span>Transaction completed on blockchain</span>
+                          </li>
+                        )}
+                      </ul>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+          </TabsContent>
+        </Tabs>
+      </div>
+    </div>
+  );
+};
+
+export default Audit;

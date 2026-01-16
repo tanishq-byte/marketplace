@@ -106,6 +106,17 @@ async def mint_initial_credits(company_name: str, wallet_address: str, file: Upl
     tx_hash = mint_carbon_credits(wallet_address, tons_detected)
     return {"status": "SUCCESS", "company": company_name, "tons": tons_detected, "blockchain_tx": tx_hash}
 
+# Add to your main.py backend
+@app.get("/api/companies/{company_name}")
+async def get_company(company_name: str):
+    company_data = await companies_col.find_one({"name": company_name})
+    if not company_data:
+        raise HTTPException(status_code=404, detail="Company not found")
+    
+    # Remove MongoDB _id field
+    company_data.pop('_id', None)
+    return company_data
+
 @app.get("/leaderboard")
 async def get_leaderboard():
     try:
