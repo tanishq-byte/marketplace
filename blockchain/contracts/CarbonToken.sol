@@ -5,46 +5,73 @@ import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
 contract CarbonToken is ERC20, Ownable {
+    
+    struct Listing {
+        uint256 id;
+        address seller;
+        uint256 amount;
+        uint256 pricePerToken; // Price in INR or preferred currency
+        string qrCodeUrl;      // Path/URL to the uploaded QR image
+        bool isPaid;           // Flagged when buyer clicks "Mark as Paid"
+        bool active;           // True while in escrow
+    }
+
+    uint256 public nextListingId;
+    mapping(uint256 => Listing) public marketListings;
+    
+    // Tracking active listings for frontend discovery
+    uint256[] public activeListingIds;
+
     constructor() ERC20("CarbonCredit", "CCT") Ownable(msg.sender) {}
 
-    // THIS IS THE EDIT: Change decimals from 18 to 0
-    function decimals() public view virtual override returns (uint8) {
-        return 0;
+    function decimals() public view virtual override returns (uint8) { return 0; }
+
+    // --- ADMIN FUNCTIONS ---
+    function mintCredits(address company, uint256 amount) public onlyOwner { _mint(company, amount); }
+
+    // --- DYNAMIC MARKETPLACE LOGIC ---
+
+    /**
+     * @notice Tesla/Seller locks tokens in escrow with a specific price and QR code.
+     */
+    function listWithPrice(uint256 _amount, uint256 _price, string memory _qrUrl) public {
+        require(balanceOf(msg.sender) >= _amount, "Insufficient balance");
+        
+        // Move tokens to the contract (Escrow Lock)
+        _transfer(msg.sender, address(this), _amount); 
+
+        marketListings[nextListingId] = Listing({
+            id: nextListingId,
+            seller: msg.sender,
+            amount: _amount,
+            pricePerToken: _price,
+            qrCodeUrl: _qrUrl,
+            isPaid: false,
+            active: true
+        });
+
+        activeListingIds.push(nextListingId);
+        nextListingId++;
     }
 
-    function mintCredits(address company, uint256 amount) public onlyOwner {
-        // Now 'amount' 750 will mean exactly 750 tokens
-        _mint(company, amount);
+    /**
+     * @notice Rivian/Buyer signals they have scanned the QR and paid via UPI.
+     */
+    function markAsPaid(uint256 _listingId) public {
+        require(marketListings[_listingId].active, "Listing not active");
+        marketListings[_listingId].isPaid = true;
     }
 
-    function retireCredits(address company, uint256 amount) public onlyOwner {
-        _burn(company, amount);
+    /**
+     * @notice Seller verifies bank account and releases the tokens to the buyer.
+     */
+    function releaseTokens(uint256 _listingId, address _buyer) public {
+        Listing storage listing = marketListings[_listingId];
+        require(msg.sender == listing.seller, "Only seller can release");
+        require(listing.isPaid, "Buyer has not marked as paid");
+        require(listing.active, "Already settled");
+
+        listing.active = false;
+        _transfer(address(this), _buyer, listing.amount); // Tokens go to Buyer
     }
-
-    mapping(address => uint256) public reputationScore;
-
-// Function to update score after Phase 2
-function updateReputation(address _company, uint256 _newScore) external onlyOwner {
-    reputationScore[_company] = _newScore;
-}
-    function tradeCredits(address _to, uint256 _amount) public {
-    require(balanceOf(msg.sender) >= _amount, "Insufficient credits to sell");
-    _transfer(msg.sender, _to, _amount);
-}
-    mapping(address => uint256) public listings;
-uint256 public totalMarketSupply;
-
-function listForSale(uint256 _amount) public {
-    require(balanceOf(msg.sender) >= _amount, "Not enough credits");
-    _transfer(msg.sender, address(this), _amount); // Move to Escrow
-    listings[msg.sender] += _amount;
-    totalMarketSupply += _amount;
-}
-
-function buyFromMarket(uint256 _amount) public {
-    require(totalMarketSupply >= _amount, "Market supply too low");
-    // Logic to loop through sellers and distribute credits goes here
-    _transfer(address(this), msg.sender, _amount);
-    totalMarketSupply -= _amount;
-}
 }
