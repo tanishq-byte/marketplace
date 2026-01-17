@@ -74,4 +74,12 @@ contract CarbonToken is ERC20, Ownable {
         listing.active = false;
         _transfer(address(this), _buyer, listing.amount); // Tokens go to Buyer
     }
+    /**
+ * @notice Phase 2 Settlement: Companies "retire" credits to offset their footprint.
+ * This permanently removes the tokens from circulation.
+ */
+function retireCredits(uint256 _amount) public {
+    require(balanceOf(msg.sender) >= _amount, "Insufficient credits to retire");
+    _burn(msg.sender, _amount); // Uses OpenZeppelin's internal burn function
+}
 }

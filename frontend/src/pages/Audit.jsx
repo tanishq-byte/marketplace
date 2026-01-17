@@ -130,87 +130,42 @@ const Audit = () => {
       setError('Please search for a company and upload audit report');
       return;
     }
-
+  
     setProcessing(true);
     setError('');
-    setAuditResult(null);
-    setUploadProgress(0);
-    
-    // Start progress simulation
-    const progressInterval = simulateProgress();
     
     try {
+      // 1. Prepare FormData to match Python's 'file: UploadFile'
       const formData = new FormData();
-      formData.append('file', file);
+      formData.append('file', file); // The key MUST be 'file'
       
-      console.log('Submitting audit for:', {
-        company: companyData.name,
-        fileName: file.name,
-        fileSize: file.size,
-        fileType: file.type
-      });
-
+      // 2. Call the Python Backend
       const response = await fetch(`${API_BASE}/phase2-settlement/${encodeURIComponent(companyData.name)}`, {
         method: 'POST',
-        body: formData,
+        body: formData, // Do NOT set 'Content-Type' header; browser handles it for FormData
       });
       
-      console.log('Response status:', response.status);
-      
       const result = await response.json();
-      console.log('Response data:', result);
       
       if (response.ok) {
-        // Clear progress interval and set to 100%
-        clearInterval(progressInterval);
-        setUploadProgress(100);
-        
-        // Format the result to match frontend expectations
         setAuditResult({
-          status: result.status || 'SETTLEMENT_PROCESSED',
-          company: companyData.name,
-          blockchain_status: result.blockchain_status || 'SUCCESS',
-          net_surplus: result.net_surplus || 0,
-          message: result.message || 'Audit processed successfully',
-          
-          // Calculate additional fields from backend response
-          allowance: companyData.initial_allowance || 0,
-          actualConsumption: result.actual_consumption || companyData.last_verified_consumption || 0,
-          penaltyApplied: result.net_surplus < 0,
-          penaltyTons: result.penalty_tons || (result.net_surplus < 0 ? Math.abs(result.net_surplus) * 0.5 : 0),
-          totalRetirement: result.total_retirement_needed || ((result.actual_consumption || 0) + (result.penalty_tons || 0)),
-          surplus: result.net_surplus || 0,
-          blockchain_tx: result.settlement_tx || result.blockchain_tx || result.transactionHash,
-          timestamp: new Date().toISOString()
+          status: result.status,
+          company: result.company,
+          blockchain_status: result.blockchain_status,
+          net_surplus: result.net_surplus,
+          blockchain_tx: result.settlement_tx, // Received from Python
+          // Calculations for UI display
+          actualConsumption: result.actual_consumption || 0,
+          penaltyApplied: result.penalty_applied,
+          totalRetirement: (result.actual_consumption || 0) * (result.penalty_applied ? 1.5 : 1)
         });
-        
-        // Clear file after successful submission
-        setFile(null);
-        const fileInput = document.getElementById('auditReport');
-        if (fileInput) fileInput.value = '';
+        alert("Blockchain Settlement Successful!");
       } else {
-        // Try to get detailed error message
-        let errorMessage = `Audit failed (${response.status}): `;
-        if (result.detail) {
-          if (Array.isArray(result.detail)) {
-            errorMessage += result.detail.map(d => d.msg).join(', ');
-          } else {
-            errorMessage += result.detail;
-          }
-        } else if (result.message) {
-          errorMessage += result.message;
-        } else {
-          errorMessage += 'Unknown error';
-        }
-        setError(errorMessage);
-        setUploadProgress(0);
+        setError(result.detail || 'Audit failed');
       }
     } catch (err) {
-      console.error('Audit submission error:', err);
-      setError(`Network error: ${err.message}. Please check your connection and try again.`);
-      setUploadProgress(0);
+      setError(`Connection Error: ${err.message}`);
     } finally {
-      clearInterval(progressInterval);
       setProcessing(false);
     }
   };

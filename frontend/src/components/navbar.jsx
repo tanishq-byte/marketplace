@@ -88,6 +88,14 @@ function Navbar() {
               </NavigationMenuLink>
             </NavigationMenuItem>
 
+            <NavigationMenuItem>
+              <NavigationMenuLink asChild>
+                <Link to="/marketplace" className={getLinkClass("/marketplace")}>
+                Marketplace
+                </Link>
+              </NavigationMenuLink>
+            </NavigationMenuItem>
+
             {(role === "donor" || role === "admin") && (
               <NavigationMenuItem>
                 <NavigationMenuLink asChild>
