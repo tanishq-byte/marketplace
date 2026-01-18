@@ -503,7 +503,7 @@ const Uploads = () => {
                               <Button
                                 variant="outline"
                                 size="sm"
-                                onClick={() => window.open(`https://sepolia.etherscan.io/tx/${result.blockchain_tx}`, '_blank')}
+                                onClick={() => window.open(`https://sepolia.etherscan.io/tx/0x${result.blockchain_tx}`, '_blank')}
                                 className="h-8 w-8 p-0"
                               >
                                 <ExternalLink className="h-4 w-4" />

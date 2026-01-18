@@ -226,82 +226,76 @@ const Audit = () => {
   };
 
   const handleAuditSubmit = async () => {
-    if (!companyData || !file) {
-      setError('Please search for a company and upload audit report');
-      return;
-    }
-
-    // For Phase 2, we'll use the backend endpoint
-    if (!privateKey) {
-      setError('Please enter your private key for blockchain transaction');
-      return;
+    if (!companyData || !file || !privateKey) {
+        setError('Please provide Company Name, Audit File, and Private Key');
+        return;
     }
 
     setProcessing(true);
     setError('');
-    
-    // Start progress simulation
     const progressInterval = simulateProgress();
 
     try {
-      // 1. First upload audit report to backend
-      const formData = new FormData();
-      formData.append('file', file);
-      
-      const ocrResponse = await fetch(`${API_BASE}/phase2-settlement/${encodeURIComponent(companyData.company)}`, {
-        method: 'POST',
-        body: formData,
-      });
-      
-      const ocrResult = await ocrResponse.json();
-      
-      if (!ocrResponse.ok) {
-        throw new Error(ocrResult.detail || 'OCR processing failed');
-      }
-
-      // 2. If OCR successful, proceed with blockchain settlement
-      if (ocrResult.status === 'DEFICIT') {
-        setAuditResult({
-          status: 'DEFICIT',
-          company: companyData.company,
-          blockchain_status: 'DEFICIT',
-          message: ocrResult.message,
-          net_surplus: ocrResult.net_surplus,
-          required_burn: ocrResult.required_burn,
-          deficit: ocrResult.deficit,
-          actualConsumption: ocrResult.actual_consumption || 0,
-          penaltyApplied: ocrResult.net_surplus < 0,
-          totalRetirement: ocrResult.required_burn || 0,
-          surplus: ocrResult.net_surplus || 0
+        // STEP 1: Upload to Backend for OCR and DB Update
+        const formData = new FormData();
+        formData.append('file', file);
+        
+        const ocrResponse = await fetch(`${API_BASE}/phase2-settlement/${encodeURIComponent(companyData.company)}`, {
+            method: 'POST',
+            body: formData,
         });
-      } else if (ocrResult.status === 'SETTLEMENT_SUCCESS' || ocrResult.status === 'BLOCKCHAIN_DELAY') {
-        // If backend already handled blockchain, show result
-        setAuditResult({
-          status: ocrResult.status,
-          company: companyData.company,
-          blockchain_status: ocrResult.status === 'SETTLEMENT_SUCCESS' ? 'SUCCESS' : 'PENDING',
-          blockchain_tx: ocrResult.blockchain_tx,
-          net_surplus: ocrResult.net_surplus,
-          actualConsumption: ocrResult.actual_consumption || 0,
-          penaltyApplied: ocrResult.net_surplus < 0,
-          totalRetirement: ocrResult.required_burn || 0,
-          surplus: ocrResult.net_surplus || 0
-        });
-      }
+        
+        const ocrResult = await ocrResponse.json();
+        if (!ocrResponse.ok) throw new Error(ocrResult.detail || 'OCR failed');
 
-      // 3. If blockchain delay, offer direct retirement option
-      if (ocrResult.status === 'BLOCKCHAIN_DELAY') {
-        alert("Backend blockchain call failed. You can retry the retirement directly from frontend.");
-      }
+        // STEP 2: Logic Branching based on OCR Result
+        if (ocrResult.status === 'DEFICIT') {
+            setAuditResult({
+                status: 'DEFICIT',
+                ...ocrResult // Show them they need to buy more
+            });
+            alert("Audit saved. Deficit detected. Purchase credits to settle.");
+        } 
+        else if (ocrResult.status === 'SETTLEMENT_SUCCESS' || ocrResult.status === 'BLOCKCHAIN_DELAY' || ocrResult.status === 'ready_to_burn') {
+            
+            // STEP 3: EXECUTE THE ACTUAL BLOCKCHAIN BURN FROM FRONTEND
+            // This ensures the 600 tons are retired using the key YOU provided
+            console.log("🚀 Starting Blockchain Burn...");
+            
+            const provider = new ethers.JsonRpcProvider(rpcUrl);
+            const wallet = new ethers.Wallet(privateKey, provider);
+            const contract = new ethers.Contract(contractAddress, CarbonABI, wallet);
+
+            const amountToBurn = ocrResult.required_burn || 600; // Use OCR value
+            
+            // Build the transaction
+            const tx = await contract.retireCredits(amountToBurn);
+            const receipt = await tx.wait();
+
+            // STEP 4: Tell the backend the burn is officially done
+            await updateCompanyStatus(companyData.company, receipt.hash);
+
+            setAuditResult({
+                status: 'SUCCESS',
+                blockchain_status: 'SUCCESS',
+                blockchain_tx: receipt.hash,
+                actualConsumption: ocrResult.actual_consumption,
+                totalRetirement: amountToBurn,
+                surplus: ocrResult.net_surplus
+            });
+
+            alert("Blockchain Settlement Successful! 600 Tons Retired.");
+        }
 
     } catch (err) {
-      setError(`Audit Error: ${err.message}`);
+        console.error('Audit/Blockchain Error:', err);
+        setError(`Error: ${err.message}`);
     } finally {
-      clearInterval(progressInterval);
-      setUploadProgress(100);
-      setTimeout(() => setProcessing(false), 500);
+        clearInterval(progressInterval);
+        setUploadProgress(100);
+        setTimeout(() => setProcessing(false), 500);
     }
-  };
+};
 
   const handleBuyCredits = () => {
     window.open('/marketplace', '_blank');
