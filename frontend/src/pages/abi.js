@@ -450,6 +450,19 @@ const CarbonABI = [
       "type": "function"
     },
     {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "_amount",
+          "type": "uint256"
+        }
+      ],
+      "name": "retireCredits",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
       "inputs": [],
       "name": "symbol",
       "outputs": [
@@ -541,5 +554,5 @@ const CarbonABI = [
       "stateMutability": "nonpayable",
       "type": "function"
     }
-  ];
+  ]
 export default CarbonABI;

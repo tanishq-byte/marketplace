@@ -547,9 +547,17 @@ async def get_rankings():
         else: grade = "AA"
 
         rankings.append({
-            "company": doc.get("name"),
-            "net_surplus": surplus,
+            # "company": doc.get("name"),
+            # "net_surplus": surplus,
             "grade": grade,
-            "status": doc.get("status")
+            # "status": doc.get("status")
+            "company": doc.get("name", "Unknown"),
+            "net_surplus": doc.get("net_surplus", 0),
+            "status": doc.get("status", "pending"),
+            "last_verified_consumption": doc.get("last_verified_consumption", 0),
+            "initial_allowance": doc.get("initial_allowance", 0),
+            "wallet_address": doc.get("wallet_address", "N/A"),
+            "compliance_result": doc.get("compliance_result", "N/A"),
+            "settlement_tx": doc.get("settlement_tx", "N/A")
         })
     return {"leaderboard": rankings}

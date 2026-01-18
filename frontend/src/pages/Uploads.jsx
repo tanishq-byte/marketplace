@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
-import { Upload, Building, Wallet, FileText, ArrowRight, CheckCircle, AlertCircle, XCircle, FileWarning } from 'lucide-react';
+import { Upload, Building, Wallet, FileText, ArrowRight, CheckCircle, AlertCircle, XCircle, FileWarning, ExternalLink, Copy, Info } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Progress } from '@/components/ui/progress';
-import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
 
 const Uploads = () => {
   const [file, setFile] = useState(null);
@@ -16,6 +17,9 @@ const Uploads = () => {
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
   const [dragOver, setDragOver] = useState(false);
+  const [showWallet, setShowWallet] = useState(false);
+
+  const API_BASE = 'http://localhost:8000';
 
   const handleFileChange = (selectedFile) => {
     if (selectedFile) {
@@ -74,7 +78,7 @@ const Uploads = () => {
 
     // Validate wallet address format (basic Ethereum address check)
     if (!walletAddress.match(/^0x[a-fA-F0-9]{40}$/)) {
-      setError('Please enter a valid Ethereum wallet address (0x...)');
+      setError('Please enter a valid Ethereum wallet address (0x followed by 40 hex characters)');
       return;
     }
 
@@ -96,35 +100,24 @@ const Uploads = () => {
     
     // Create FormData for file upload
     const formData = new FormData();
-    formData.append('file', file); // Make sure this matches backend expectation
+    formData.append('file', file);
     
-    // According to your backend, it expects 'wallet_address' as a query parameter, not form data
-    // But let's also add it to FormData in case it's needed
-    
-    console.log('Submitting with:', {
-      companyName,
-      walletAddress,
-      fileName: file.name,
-      fileSize: file.size,
-      fileType: file.type
-    });
-
     try {
-      const response = await fetch(`http://localhost:8000/phase1-minting/${encodeURIComponent(companyName)}?wallet_address=${encodeURIComponent(walletAddress)}`, {
-        method: 'POST',
-        body: formData,
-        // IMPORTANT: Do NOT set Content-Type header for FormData
-        // The browser will set it automatically with boundary
-      });
-      
-      console.log('Response status:', response.status);
+      // Call the updated backend endpoint with correct parameters
+      const response = await fetch(
+        `${API_BASE}/phase1-minting/${encodeURIComponent(companyName)}?wallet_address=${encodeURIComponent(walletAddress)}`, 
+        {
+          method: 'POST',
+          body: formData,
+        }
+      );
       
       const data = await response.json();
-      console.log('Response data:', data);
       
       if (response.ok) {
         setResult(data);
         setUploadProgress(100);
+        
         // Clear form on success
         setCompanyName('');
         setWalletAddress('');
@@ -132,14 +125,10 @@ const Uploads = () => {
         const fileInput = document.getElementById('carbonReport');
         if (fileInput) fileInput.value = '';
       } else {
-        // Try to get detailed error message
-        let errorMessage = `Upload failed (${response.status}): `;
+        // Handle error response
+        let errorMessage = 'Upload failed: ';
         if (data.detail) {
-          if (Array.isArray(data.detail)) {
-            errorMessage += data.detail.map(d => d.msg).join(', ');
-          } else {
-            errorMessage += data.detail;
-          }
+          errorMessage += data.detail;
         } else if (data.message) {
           errorMessage += data.message;
         } else {
@@ -162,18 +151,32 @@ const Uploads = () => {
     document.getElementById('carbonReport').click();
   };
 
+  const copyToClipboard = (text) => {
+    navigator.clipboard.writeText(text);
+    // In a real app, use a toast notification here
+    alert('Copied to clipboard!');
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-green-50 p-4 md:p-8">
       <div className="max-w-6xl mx-auto">
         {/* Header */}
         <div className="mb-10">
-          <h1 className="text-4xl font-bold text-gray-900 mb-3 flex items-center gap-3">
-            <Upload className="h-10 w-10 text-green-600" />
-            Initial Carbon Allowance Minting
-          </h1>
-          <p className="text-gray-600 text-lg">
-            Upload your carbon report to receive equivalent carbon credits as tokens
-          </p>
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-4xl font-bold text-gray-900 mb-3 flex items-center gap-3">
+                <Upload className="h-10 w-10 text-green-600" />
+                Phase 1: Company Registration & Minting
+              </h1>
+              <p className="text-gray-600 text-lg">
+                Upload your carbon report to receive equivalent carbon credits (CCT tokens)
+              </p>
+            </div>
+            <Badge className="bg-green-100 text-green-800 hover:bg-green-200">
+              <Info className="h-4 w-4 mr-2" />
+              OCR Processing Enabled
+            </Badge>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
@@ -182,16 +185,17 @@ const Uploads = () => {
             <CardHeader>
               <CardTitle className="text-2xl flex items-center gap-2">
                 <Building className="h-6 w-6" />
-                Company Information
+                Company Registration
               </CardTitle>
               <CardDescription>
-                Enter your company details and upload the carbon report PDF
+                Register your company and mint initial carbon credits based on your carbon report
               </CardDescription>
             </CardHeader>
             
             <CardContent>
               <form onSubmit={handleSubmit} className="space-y-6">
                 <div className="space-y-4">
+                  {/* Company Name */}
                   <div>
                     <Label htmlFor="companyName" className="text-base">
                       Company Name *
@@ -200,19 +204,23 @@ const Uploads = () => {
                       id="companyName"
                       value={companyName}
                       onChange={(e) => setCompanyName(e.target.value)}
-                      placeholder="Enter company name"
+                      placeholder="Enter exact company name"
                       className="mt-1 h-12"
                       required
                       disabled={isUploading}
                     />
+                    <p className="text-xs text-gray-500 mt-1 ml-1">
+                      Use the same name for Phase 2 audit
+                    </p>
                   </div>
 
+                  {/* Wallet Address */}
                   <div>
                     <Label htmlFor="walletAddress" className="text-base">
-                      Wallet Address *
+                      Ethereum Wallet Address *
                     </Label>
-                    <div className="flex items-center mt-1">
-                      <Wallet className="h-5 w-5 text-gray-400 ml-3 absolute" />
+                    <div className="relative mt-1">
+                      <Wallet className="absolute left-3 top-3 h-5 w-5 text-gray-400" />
                       <Input
                         id="walletAddress"
                         value={walletAddress}
@@ -224,15 +232,34 @@ const Uploads = () => {
                         pattern="^0x[a-fA-F0-9]{40}$"
                         title="Enter a valid Ethereum address (0x followed by 40 hex characters)"
                       />
+                      {walletAddress && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setShowWallet(!showWallet)}
+                          className="absolute right-2 top-2 h-8 w-8 p-0"
+                        >
+                          {showWallet ? 'Hide' : 'Show'}
+                        </Button>
+                      )}
                     </div>
-                    <p className="text-xs text-gray-500 mt-1 ml-1">
-                      Must be a valid Ethereum address (42 characters starting with 0x)
-                    </p>
+                    <div className="flex items-center justify-between mt-1">
+                      <p className="text-xs text-gray-500 ml-1">
+                        Must be a valid Ethereum address
+                      </p>
+                      {walletAddress && !showWallet && (
+                        <p className="text-xs text-gray-600 font-mono">
+                          {walletAddress.slice(0, 6)}...{walletAddress.slice(-4)}
+                        </p>
+                      )}
+                    </div>
                   </div>
 
+                  {/* File Upload */}
                   <div>
                     <Label htmlFor="carbonReport" className="text-base">
-                      Carbon Report (PDF) *
+                      Carbon Emission Report (PDF) *
                     </Label>
                     
                     {/* Hidden file input */}
@@ -267,7 +294,7 @@ const Uploads = () => {
                             <div className="text-left">
                               <p className="font-medium text-gray-900">{file.name}</p>
                               <p className="text-sm text-gray-500">
-                                {(file.size / 1024).toFixed(2)} KB
+                                {(file.size / 1024).toFixed(2)} KB • PDF Document
                               </p>
                             </div>
                           </div>
@@ -304,7 +331,7 @@ const Uploads = () => {
                             Choose File
                           </Button>
                           <p className="text-xs text-gray-500 mt-4">
-                            PDF files only • Max 10MB
+                            PDF files only • Max 10MB • Ensure carbon values are visible
                           </p>
                         </>
                       )}
@@ -316,33 +343,24 @@ const Uploads = () => {
                 {error && (
                   <Alert variant="destructive" className="animate-in slide-in-from-top duration-300">
                     <AlertCircle className="h-4 w-4" />
+                    <AlertTitle>Error</AlertTitle>
                     <AlertDescription className="font-medium">{error}</AlertDescription>
-                  </Alert>
-                )}
-
-                {/* Debug Info - Remove in production */}
-                {process.env.NODE_ENV === 'development' && file && (
-                  <Alert className="bg-blue-50 border-blue-200">
-                    <FileWarning className="h-4 w-4 text-blue-600" />
-                    <AlertDescription className="text-blue-700 text-sm">
-                      Debug: File ready - {file.name} ({file.size} bytes)
-                    </AlertDescription>
                   </Alert>
                 )}
 
                 <Button 
                   type="submit" 
-                  className="w-full h-12 text-lg bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700"
+                  className="w-full h-12 text-lg bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 shadow-md"
                   disabled={isUploading || !file || !companyName || !walletAddress}
                 >
                   {isUploading ? (
                     <span className="flex items-center gap-2">
                       <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      Processing...
+                      Processing & Minting...
                     </span>
                   ) : (
                     <span className="flex items-center gap-2">
-                      Mint Carbon Credits
+                      Register Company & Mint Tokens
                       <ArrowRight className="h-5 w-5" />
                     </span>
                   )}
@@ -351,13 +369,13 @@ const Uploads = () => {
                 {isUploading && (
                   <div className="space-y-2 animate-in fade-in duration-300">
                     <div className="flex justify-between text-sm">
-                      <span className="font-medium">Uploading & Processing</span>
+                      <span className="font-medium">Processing Report...</span>
                       <span className="font-bold">{uploadProgress}%</span>
                     </div>
                     <Progress value={uploadProgress} className="h-2" />
                     <div className="flex justify-between text-xs text-gray-500">
-                      <span>Extracting carbon data...</span>
-                      <span>Minting tokens...</span>
+                      <span>Extracting carbon data via OCR...</span>
+                      <span>Minting tokens on blockchain...</span>
                     </div>
                   </div>
                 )}
@@ -370,7 +388,10 @@ const Uploads = () => {
             {/* Process Steps */}
             <Card className="shadow-lg border-0">
               <CardHeader>
-                <CardTitle className="text-2xl">How It Works</CardTitle>
+                <CardTitle className="text-2xl flex items-center gap-2">
+                  <Info className="h-6 w-6" />
+                  How It Works
+                </CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="space-y-6">
@@ -378,30 +399,51 @@ const Uploads = () => {
                     {
                       step: 1,
                       title: 'Upload Report',
-                      description: 'Upload your certified carbon emissions report in PDF format'
+                      description: 'Upload certified carbon emissions PDF. Our OCR extracts tonnage.',
+                      status: file ? '✓ Complete' : 'Pending'
                     },
                     {
                       step: 2,
-                      title: 'OCR Processing',
-                      description: 'Our system extracts carbon tonnage using advanced OCR'
+                      title: 'Company Registration',
+                      description: 'Company registered in database with wallet address.',
+                      status: companyName && walletAddress ? '✓ Ready' : 'Pending'
                     },
                     {
                       step: 3,
                       title: 'Token Minting',
-                      description: 'Equivalent carbon credits are minted as ERC20 tokens'
+                      description: 'Admin mints CCT tokens to your wallet on blockchain.',
+                      status: result ? '✓ Complete' : 'Pending'
                     },
                     {
                       step: 4,
-                      title: 'Wallet Allocation',
-                      description: 'Tokens are transferred to your provided wallet address'
+                      title: 'Phase 2 Ready',
+                      description: 'Ready for audit & settlement in Phase 2.',
+                      status: result ? '✓ Ready' : 'Not Started'
                     }
                   ].map((item) => (
                     <div key={item.step} className="flex items-start gap-4">
-                      <div className="flex-shrink-0 h-8 w-8 rounded-full bg-green-100 text-green-800 flex items-center justify-center font-bold">
+                      <div className={`flex-shrink-0 h-8 w-8 rounded-full flex items-center justify-center font-bold ${
+                        item.status.includes('✓') 
+                          ? 'bg-green-100 text-green-800' 
+                          : item.status.includes('Ready') 
+                          ? 'bg-blue-100 text-blue-800'
+                          : 'bg-gray-100 text-gray-800'
+                      }`}>
                         {item.step}
                       </div>
-                      <div>
-                        <h3 className="font-semibold text-gray-900">{item.title}</h3>
+                      <div className="flex-1">
+                        <div className="flex justify-between items-center">
+                          <h3 className="font-semibold text-gray-900">{item.title}</h3>
+                          <span className={`text-xs font-medium ${
+                            item.status.includes('✓') 
+                              ? 'text-green-600' 
+                              : item.status.includes('Ready') 
+                              ? 'text-blue-600'
+                              : 'text-gray-500'
+                          }`}>
+                            {item.status}
+                          </span>
+                        </div>
                         <p className="text-gray-600 text-sm mt-1">{item.description}</p>
                       </div>
                     </div>
@@ -416,123 +458,201 @@ const Uploads = () => {
                 <CardHeader>
                   <CardTitle className="text-2xl flex items-center gap-2 text-green-800">
                     <CheckCircle className="h-6 w-6" />
-                    Minting Successful!
+                    Registration & Minting Successful!
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="space-y-4">
+                  <div className="space-y-6">
+                    {/* Summary Cards */}
                     <div className="grid grid-cols-2 gap-4">
-                      <div className="bg-white p-4 rounded-lg">
-                        <p className="text-sm text-gray-500">Company</p>
-                        <p className="font-semibold text-lg">{result.company}</p>
-                      </div>
-                      <div className="bg-white p-4 rounded-lg">
-                        <p className="text-sm text-gray-500">Carbon Allowance</p>
-                        <p className="font-semibold text-lg text-green-700">{result.tons} tons</p>
-                      </div>
+                      <Card className="bg-white">
+                        <CardContent className="pt-6">
+                          <p className="text-sm text-gray-500 mb-2">Company</p>
+                          <p className="text-xl font-bold text-gray-900">{result.company}</p>
+                        </CardContent>
+                      </Card>
+                      <Card className="bg-white">
+                        <CardContent className="pt-6">
+                          <p className="text-sm text-gray-500 mb-2">Tokens Minted</p>
+                          <p className="text-xl font-bold text-green-700">{result.tons_allocated || result.tons} CCT</p>
+                        </CardContent>
+                      </Card>
                     </div>
+
+                    {/* Transaction Details */}
                     {result.blockchain_tx && result.blockchain_tx !== 'null' && (
-                      <div className="bg-white p-4 rounded-lg">
-                        <p className="text-sm text-gray-500 mb-2">Transaction Hash</p>
-                        <div className="flex items-center gap-2">
-                          <div className="font-mono text-sm bg-gray-100 p-2 rounded flex-1 truncate">
-                            {result.blockchain_tx}
+                      <Card>
+                        <CardContent className="pt-6">
+                          <div className="flex items-center justify-between mb-3">
+                            <p className="text-sm font-medium text-gray-700">Blockchain Transaction</p>
+                            <Badge className="bg-green-100 text-green-800">Confirmed</Badge>
                           </div>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => {
-                              navigator.clipboard.writeText(result.blockchain_tx);
-                              // You could add a toast notification here
-                              alert('Transaction hash copied to clipboard!');
-                            }}
-                          >
-                            Copy
-                          </Button>
-                        </div>
-                      </div>
+                          <div className="flex items-center gap-2">
+                            <div className="font-mono text-sm bg-gray-100 p-3 rounded flex-1 truncate">
+                              {result.blockchain_tx}
+                            </div>
+                            <div className="flex gap-2">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => copyToClipboard(result.blockchain_tx)}
+                                className="h-8 w-8 p-0"
+                              >
+                                <Copy className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => window.open(`https://sepolia.etherscan.io/tx/${result.blockchain_tx}`, '_blank')}
+                                className="h-8 w-8 p-0"
+                              >
+                                <ExternalLink className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </div>
+                          <p className="text-xs text-gray-500 mt-2">
+                            Transaction hash for minting {result.tons_allocated || result.tons} CCT tokens
+                          </p>
+                        </CardContent>
+                      </Card>
                     )}
+
+                    {/* Success Alert */}
                     <Alert className="bg-green-50 border-green-200">
                       <CheckCircle className="h-4 w-4 text-green-600" />
+                      <AlertTitle className="text-green-800">Registration Complete</AlertTitle>
                       <AlertDescription className="text-green-700">
-                        {result.tons} carbon credits have been minted to your wallet. You can now trade them on the marketplace.
+                        {result.tons_allocated || result.tons} carbon credits (CCT) have been minted to your wallet. 
+                        You can now proceed to Phase 2 audit when ready.
                       </AlertDescription>
                     </Alert>
                     
-                    <div className="pt-4 border-t border-gray-200">
-                      <h4 className="font-semibold text-gray-900 mb-2">Next Steps:</h4>
-                      <ul className="text-sm text-gray-600 space-y-1">
-                        <li className="flex items-center gap-2">
-                          <div className="h-4 w-4 rounded-full bg-gray-200 flex items-center justify-center flex-shrink-0">
-                            <span className="text-xs">1</span>
+                    {/* Next Steps */}
+                    <div className="space-y-4">
+                      <h4 className="font-semibold text-gray-900">Next Steps:</h4>
+                      <div className="space-y-3">
+                        <div className="flex items-start gap-3">
+                          <div className="h-6 w-6 rounded-full bg-blue-100 text-blue-800 flex items-center justify-center flex-shrink-0 mt-0.5">
+                            1
                           </div>
-                          <span>Monitor your carbon credits in the Dashboard</span>
-                        </li>
-                        <li className="flex items-center gap-2">
-                          <div className="h-4 w-4 rounded-full bg-gray-200 flex items-center justify-center flex-shrink-0">
-                            <span className="text-xs">2</span>
+                          <div>
+                            <p className="font-medium text-gray-900">Monitor Your Dashboard</p>
+                            <p className="text-sm text-gray-600">Track your carbon credits and reputation score</p>
                           </div>
-                          <span>Trade surplus credits on the Marketplace</span>
-                        </li>
-                        <li className="flex items-center gap-2">
-                          <div className="h-4 w-4 rounded-full bg-gray-200 flex items-center justify-center flex-shrink-0">
-                            <span className="text-xs">3</span>
+                        </div>
+                        <div className="flex items-start gap-3">
+                          <div className="h-6 w-6 rounded-full bg-blue-100 text-blue-800 flex items-center justify-center flex-shrink-0 mt-0.5">
+                            2
                           </div>
-                          <span>Submit audit reports during settlement phase</span>
-                        </li>
-                        <li className="flex items-center gap-2">
-                          <div className="h-4 w-4 rounded-full bg-gray-200 flex items-center justify-center flex-shrink-0">
-                            <span className="text-xs">4</span>
+                          <div>
+                            <p className="font-medium text-gray-900">Trade on Marketplace</p>
+                            <p className="text-sm text-gray-600">Buy/sell surplus credits with other companies</p>
                           </div>
-                          <span>Track your reputation score on the Leaderboard</span>
-                        </li>
-                      </ul>
+                        </div>
+                        <div className="flex items-start gap-3">
+                          <div className="h-6 w-6 rounded-full bg-blue-100 text-blue-800 flex items-center justify-center flex-shrink-0 mt-0.5">
+                            3
+                          </div>
+                          <div>
+                            <p className="font-medium text-gray-900">Phase 2 Audit</p>
+                            <p className="text-sm text-gray-600">Submit actual consumption report for settlement</p>
+                          </div>
+                        </div>
+                        <div className="flex items-start gap-3">
+                          <div className="h-6 w-6 rounded-full bg-blue-100 text-blue-800 flex items-center justify-center flex-shrink-0 mt-0.5">
+                            4
+                          </div>
+                          <div>
+                            <p className="font-medium text-gray-900">Leaderboard Ranking</p>
+                            <p className="text-sm text-gray-600">Improve your environmental reputation grade</p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Action Buttons */}
+                    <div className="flex gap-3 pt-4 border-t border-gray-200">
+                      <Button 
+                        variant="outline" 
+                        className="flex-1"
+                        onClick={() => window.location.href = '/audit'}
+                      >
+                        Go to Phase 2 Audit
+                      </Button>
+                      <Button 
+                        className="flex-1 bg-green-600 hover:bg-green-700"
+                        onClick={() => window.location.href = '/marketplace'}
+                      >
+                        Visit Marketplace
+                      </Button>
                     </div>
                   </div>
                 </CardContent>
               </Card>
             )}
             
-            {/* Instructions Card */}
+            {/* Instructions Card - Show when no result */}
             {!result && !isUploading && (
               <Card className="shadow-lg border-0 border-l-4 border-green-500">
                 <CardHeader>
-                  <CardTitle className="text-xl text-green-800">
-                    📋 Preparation Checklist
+                  <CardTitle className="text-xl text-green-800 flex items-center gap-2">
+                    <Info className="h-5 w-5" />
+                    Important Notes
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <ul className="space-y-3 text-gray-600">
-                    <li className="flex items-start gap-2">
+                  <div className="space-y-3">
+                    <div className="flex items-start gap-2">
                       <div className="h-5 w-5 rounded-full bg-green-100 text-green-800 flex items-center justify-center flex-shrink-0 mt-0.5">
-                        ✓
+                        !
                       </div>
-                      <span>Have your company's legal name ready</span>
-                    </li>
-                    <li className="flex items-start gap-2">
+                      <div>
+                        <p className="font-medium text-gray-900">Use Consistent Information</p>
+                        <p className="text-sm text-gray-600">Use the same company name and wallet for Phase 2</p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-2">
                       <div className="h-5 w-5 rounded-full bg-green-100 text-green-800 flex items-center justify-center flex-shrink-0 mt-0.5">
-                        ✓
+                        !
                       </div>
-                      <span>Ensure you have a Web3 wallet address (MetaMask, etc.)</span>
-                    </li>
-                    <li className="flex items-start gap-2">
+                      <div>
+                        <p className="font-medium text-gray-900">Report Quality</p>
+                        <p className="text-sm text-gray-600">Ensure carbon values are clearly visible in PDF for OCR</p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-2">
                       <div className="h-5 w-5 rounded-full bg-green-100 text-green-800 flex items-center justify-center flex-shrink-0 mt-0.5">
-                        ✓
+                        !
                       </div>
-                      <span>Prepare your carbon report in PDF format</span>
-                    </li>
-                    <li className="flex items-start gap-2">
+                      <div>
+                        <p className="font-medium text-gray-900">Token Safety</p>
+                        <p className="text-sm text-gray-600">Tokens are minted to your provided wallet address</p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-2">
                       <div className="h-5 w-5 rounded-full bg-green-100 text-green-800 flex items-center justify-center flex-shrink-0 mt-0.5">
-                        ✓
+                        !
                       </div>
-                      <span>Make sure carbon tonnage is clearly stated in the report</span>
-                    </li>
-                  </ul>
+                      <div>
+                        <p className="font-medium text-gray-900">1.5x Penalty System</p>
+                        <p className="text-sm text-gray-600">Phase 2 audit applies 1.5x penalty for overconsumption</p>
+                      </div>
+                    </div>
+                  </div>
                 </CardContent>
               </Card>
             )}
           </div>
         </div>
+
+        {/* Footer Note */}
+        {!result && (
+          <div className="mt-8 text-center">
+            <p className="text-sm text-gray-500">
+              Need help? Ensure your PDF clearly displays carbon tonnage values (e.g., "500 tons", "250 tCO2e")
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Search, FileCheck, AlertTriangle, CheckCircle, Clock, DollarSign, Shield, TrendingDown, ExternalLink, Eye, EyeOff, XCircle, Upload } from 'lucide-react';
+import { Search, FileCheck, AlertTriangle, CheckCircle, Clock, DollarSign, Shield, TrendingDown, ExternalLink, Eye, EyeOff, XCircle, Upload, Key, Lock, Wallet } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -9,6 +9,8 @@ import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { ethers } from 'ethers';
+import CarbonABI from '../pages/abi.js'; // Import the ABI
 
 const Audit = () => {
   const [companyName, setCompanyName] = useState('');
@@ -19,12 +21,16 @@ const Audit = () => {
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState('');
   const [showWallet, setShowWallet] = useState(false);
+  const [showPrivateKey, setShowPrivateKey] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [privateKey, setPrivateKey] = useState('');
+  const [contractAddress, setContractAddress] = useState('0x8b38F7d3da2c4A3eDA5c7d5873B4236ca916d0b0');
+  const [rpcUrl, setRpcUrl] = useState('http://127.0.0.1:8545');
 
   const API_BASE = 'http://localhost:8000';
 
-  // Function to search for company data
+  // Function to search for company data - Updated to match your backend
   const handleSearch = async () => {
     if (!companyName.trim()) {
       setError('Please enter a company name');
@@ -38,21 +44,23 @@ const Audit = () => {
     setFile(null);
 
     try {
-      // Try to get company data
-      const response = await fetch(`${API_BASE}/api/companies/${encodeURIComponent(companyName)}`, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
-
-      if (response.status === 404) {
-        setError('Company not found. Please verify the company name.');
-      } else if (response.ok) {
-        const data = await response.json();
-        setCompanyData(data);
+      // Get leaderboard data and find company
+      const response = await fetch(`${API_BASE}/leaderboard`);
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      
+      const data = await response.json();
+      if (data.leaderboard) {
+        const company = data.leaderboard.find(c => 
+          c.company.toLowerCase() === companyName.toLowerCase()
+        );
+        
+        if (company) {
+          setCompanyData(company);
+        } else {
+          setError('Company not found in leaderboard. Please verify the company name.');
+        }
       } else {
-        throw new Error(`Failed to fetch company data: ${response.status}`);
+        throw new Error('No leaderboard data received');
       }
     } catch (err) {
       console.error('Search error:', err);
@@ -125,55 +133,178 @@ const Audit = () => {
     return interval;
   };
 
-  const handleAuditSubmit = async () => {
-    if (!companyData || !file) {
-      setError('Please search for a company and upload audit report');
+  // Direct blockchain call for retiring credits
+  const handleDirectRetire = async () => {
+    if (!privateKey || !contractAddress) {
+      setError('Please enter private key and contract address');
       return;
     }
-  
+
+    if (!companyData || companyData.status === 'audited') {
+      setError('Company not found or already audited');
+      return;
+    }
+
     setProcessing(true);
     setError('');
-    
+
     try {
-      // 1. Prepare FormData to match Python's 'file: UploadFile'
-      const formData = new FormData();
-      formData.append('file', file); // The key MUST be 'file'
-      
-      // 2. Call the Python Backend
-      const response = await fetch(`${API_BASE}/phase2-settlement/${encodeURIComponent(companyData.name)}`, {
-        method: 'POST',
-        body: formData, // Do NOT set 'Content-Type' header; browser handles it for FormData
-      });
-      
-      const result = await response.json();
-      
-      if (response.ok) {
-        setAuditResult({
-          status: result.status,
-          company: result.company,
-          blockchain_status: result.blockchain_status,
-          net_surplus: result.net_surplus,
-          blockchain_tx: result.settlement_tx, // Received from Python
-          // Calculations for UI display
-          actualConsumption: result.actual_consumption || 0,
-          penaltyApplied: result.penalty_applied,
-          totalRetirement: (result.actual_consumption || 0) * (result.penalty_applied ? 1.5 : 1)
-        });
-        alert("Blockchain Settlement Successful!");
-      } else {
-        setError(result.detail || 'Audit failed');
+      // Calculate required burn amount based on your backend logic
+      const allowance = companyData.initial_allowance || 0;
+      const lastConsumption = companyData.last_verified_consumption || 0;
+      const requiredBurn = Math.max(lastConsumption, allowance); // Simplified for demo
+
+      // Connect to blockchain
+      const provider = new ethers.JsonRpcProvider(rpcUrl);
+      const wallet = new ethers.Wallet(privateKey, provider);
+      const contract = new ethers.Contract(contractAddress, CarbonABI, wallet);
+
+      // Check balance first
+      const balance = await contract.balanceOf(wallet.address);
+      console.log('Current balance:', balance.toString(), 'Required:', requiredBurn);
+
+      if (BigInt(balance.toString()) < BigInt(requiredBurn)) {
+        throw new Error(`Insufficient balance: ${balance.toString()} CCT available, ${requiredBurn} CCT required`);
       }
+
+      // Call retireCredits function
+      const tx = await contract.retireCredits(requiredBurn);
+      console.log('Transaction sent:', tx.hash);
+
+      // Wait for transaction confirmation
+      const receipt = await tx.wait();
+      console.log('Transaction confirmed:', receipt.hash);
+
+      // Update local state
+      setAuditResult({
+        status: 'SUCCESS',
+        company: companyData.company,
+        blockchain_status: 'SUCCESS',
+        blockchain_tx: receipt.hash,
+        net_surplus: allowance - lastConsumption,
+        actualConsumption: lastConsumption,
+        penaltyApplied: lastConsumption > allowance,
+        penaltyTons: lastConsumption > allowance ? (lastConsumption - allowance) * 0.5 : 0,
+        totalRetirement: requiredBurn,
+        surplus: allowance - lastConsumption
+      });
+
+      // Update company status in backend
+      await updateCompanyStatus(companyData.company, receipt.hash);
+
+      alert("Blockchain Settlement Successful!");
+
     } catch (err) {
-      setError(`Connection Error: ${err.message}`);
+      console.error('Blockchain error:', err);
+      setError(`Blockchain Error: ${err.message}`);
     } finally {
       setProcessing(false);
     }
   };
 
+  // Update company status in backend after successful burn
+  const updateCompanyStatus = async (companyName, txHash) => {
+    try {
+      const response = await fetch(`${API_BASE}/api/update-audit-status`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          company: companyName,
+          tx_hash: txHash,
+          status: 'audited'
+        })
+      });
+      
+      if (!response.ok) {
+        console.warn('Failed to update backend status, but blockchain transaction succeeded');
+      }
+    } catch (err) {
+      console.error('Failed to update backend:', err);
+    }
+  };
+
+  const handleAuditSubmit = async () => {
+    if (!companyData || !file) {
+      setError('Please search for a company and upload audit report');
+      return;
+    }
+
+    // For Phase 2, we'll use the backend endpoint
+    if (!privateKey) {
+      setError('Please enter your private key for blockchain transaction');
+      return;
+    }
+
+    setProcessing(true);
+    setError('');
+    
+    // Start progress simulation
+    const progressInterval = simulateProgress();
+
+    try {
+      // 1. First upload audit report to backend
+      const formData = new FormData();
+      formData.append('file', file);
+      
+      const ocrResponse = await fetch(`${API_BASE}/phase2-settlement/${encodeURIComponent(companyData.company)}`, {
+        method: 'POST',
+        body: formData,
+      });
+      
+      const ocrResult = await ocrResponse.json();
+      
+      if (!ocrResponse.ok) {
+        throw new Error(ocrResult.detail || 'OCR processing failed');
+      }
+
+      // 2. If OCR successful, proceed with blockchain settlement
+      if (ocrResult.status === 'DEFICIT') {
+        setAuditResult({
+          status: 'DEFICIT',
+          company: companyData.company,
+          blockchain_status: 'DEFICIT',
+          message: ocrResult.message,
+          net_surplus: ocrResult.net_surplus,
+          required_burn: ocrResult.required_burn,
+          deficit: ocrResult.deficit,
+          actualConsumption: ocrResult.actual_consumption || 0,
+          penaltyApplied: ocrResult.net_surplus < 0,
+          totalRetirement: ocrResult.required_burn || 0,
+          surplus: ocrResult.net_surplus || 0
+        });
+      } else if (ocrResult.status === 'SETTLEMENT_SUCCESS' || ocrResult.status === 'BLOCKCHAIN_DELAY') {
+        // If backend already handled blockchain, show result
+        setAuditResult({
+          status: ocrResult.status,
+          company: companyData.company,
+          blockchain_status: ocrResult.status === 'SETTLEMENT_SUCCESS' ? 'SUCCESS' : 'PENDING',
+          blockchain_tx: ocrResult.blockchain_tx,
+          net_surplus: ocrResult.net_surplus,
+          actualConsumption: ocrResult.actual_consumption || 0,
+          penaltyApplied: ocrResult.net_surplus < 0,
+          totalRetirement: ocrResult.required_burn || 0,
+          surplus: ocrResult.net_surplus || 0
+        });
+      }
+
+      // 3. If blockchain delay, offer direct retirement option
+      if (ocrResult.status === 'BLOCKCHAIN_DELAY') {
+        alert("Backend blockchain call failed. You can retry the retirement directly from frontend.");
+      }
+
+    } catch (err) {
+      setError(`Audit Error: ${err.message}`);
+    } finally {
+      clearInterval(progressInterval);
+      setUploadProgress(100);
+      setTimeout(() => setProcessing(false), 500);
+    }
+  };
+
   const handleBuyCredits = () => {
-    // In real app, this would open marketplace or connect to wallet
-    alert('Redirecting to carbon credit marketplace...');
-    // window.open('/marketplace', '_blank');
+    window.open('/marketplace', '_blank');
   };
 
   const handleTabSwitch = (value) => {
@@ -182,6 +313,11 @@ const Audit = () => {
       return false;
     }
     return true;
+  };
+
+  // Validate private key format
+  const isValidPrivateKey = (key) => {
+    return key.length === 64 || (key.startsWith('0x') && key.length === 66);
   };
 
   return (
@@ -196,6 +332,13 @@ const Audit = () => {
           <p className="text-gray-600 text-lg">
             Verify actual carbon consumption and settle credits on the blockchain
           </p>
+          <Alert className="mt-4 bg-yellow-50 border-yellow-200">
+            <AlertTriangle className="h-4 w-4 text-yellow-600" />
+            <AlertTitle className="text-yellow-800">Development Mode</AlertTitle>
+            <AlertDescription className="text-yellow-700">
+              Private key is requested for blockchain transactions. This is for testing only. In production, use MetaMask or secure wallet connections.
+            </AlertDescription>
+          </Alert>
         </div>
 
         <Tabs defaultValue="search" className="space-y-8">
@@ -277,10 +420,10 @@ const Audit = () => {
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                           <div>
                             <div className="flex items-center justify-between mb-4">
-                              <h3 className="text-xl font-bold text-gray-900">{companyData.name}</h3>
+                              <h3 className="text-xl font-bold text-gray-900">{companyData.company}</h3>
                               <Badge className={
-                                companyData.status === 'active' ? 'bg-green-100 text-green-800' :
-                                companyData.status === 'audited' ? 'bg-blue-100 text-blue-800' :
+                                companyData.status === 'audited' ? 'bg-green-100 text-green-800' :
+                                companyData.status === 'active' ? 'bg-blue-100 text-blue-800' :
                                 companyData.status === 'deficit' ? 'bg-red-100 text-red-800' :
                                 'bg-yellow-100 text-yellow-800'
                               }>
@@ -316,17 +459,22 @@ const Audit = () => {
                                 <span className="font-semibold">{companyData.last_verified_consumption || 0} tons</span>
                               </div>
                               <div className="flex justify-between">
-                                <span className="text-gray-600">Minted On:</span>
-                                <span>{companyData.minted_at ? new Date(companyData.minted_at).toLocaleDateString() : 'N/A'}</span>
+                                <span className="text-gray-600">Net Surplus:</span>
+                                <span className={`font-bold ${(companyData.net_surplus || 0) >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+                                  {(companyData.net_surplus || 0) >= 0 ? '+' : ''}{companyData.net_surplus || 0} tons
+                                </span>
                               </div>
-                              {companyData.net_surplus !== undefined && (
-                                <div className="flex justify-between">
-                                  <span className="text-gray-600">Current Surplus:</span>
-                                  <span className={`font-bold ${(companyData.net_surplus || 0) >= 0 ? 'text-green-700' : 'text-red-700'}`}>
-                                    {(companyData.net_surplus || 0) >= 0 ? '+' : ''}{companyData.net_surplus || 0} tons
-                                  </span>
-                                </div>
-                              )}
+                              <div className="flex justify-between">
+                                <span className="text-gray-600">Reputation Grade:</span>
+                                <Badge className={
+                                  companyData.grade?.includes('AAA') ? 'bg-green-500 text-white' :
+                                  companyData.grade?.includes('AA') ? 'bg-blue-500 text-white' :
+                                  companyData.grade?.includes('B') ? 'bg-red-500 text-white' :
+                                  'bg-gray-500 text-white'
+                                }>
+                                  {companyData.grade || 'N/A'}
+                                </Badge>
+                              </div>
                             </div>
                           </div>
                           
@@ -367,8 +515,9 @@ const Audit = () => {
                                   if (auditTab) auditTab.click();
                                 }}
                                 className="w-full bg-gradient-to-r from-purple-600 to-indigo-600"
+                                disabled={companyData.status === 'audited'}
                               >
-                                Proceed to Audit
+                                {companyData.status === 'audited' ? 'Already Audited' : 'Proceed to Audit'}
                               </Button>
                             </div>
                           </div>
@@ -403,6 +552,83 @@ const Audit = () => {
                   </Alert>
                 ) : (
                   <>
+                    {/* Blockchain Configuration Section */}
+                    <div className="space-y-4">
+                      <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                        <Lock className="h-5 w-5" />
+                        Blockchain Configuration (For Testing)
+                      </h3>
+                      
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <Label htmlFor="rpcUrl">RPC URL *</Label>
+                          <Input
+                            id="rpcUrl"
+                            value={rpcUrl}
+                            onChange={(e) => setRpcUrl(e.target.value)}
+                            placeholder="http://127.0.0.1:8545"
+                            className="mt-1"
+                            disabled={processing}
+                          />
+                          <p className="text-xs text-gray-500 mt-1">Local Hardhat node RPC URL</p>
+                        </div>
+                        
+                        <div>
+                          <Label htmlFor="contractAddress">Contract Address *</Label>
+                          <Input
+                            id="contractAddress"
+                            value={contractAddress}
+                            onChange={(e) => setContractAddress(e.target.value)}
+                            placeholder="0x..."
+                            className="mt-1"
+                            disabled={processing}
+                          />
+                          <p className="text-xs text-gray-500 mt-1">CarbonToken contract address</p>
+                        </div>
+                      </div>
+                      
+                      <div>
+                        <Label htmlFor="privateKey">Company Private Key *</Label>
+                        <div className="relative mt-1">
+                          <Key className="absolute left-3 top-3 h-5 w-5 text-gray-400" />
+                          <Input
+                            id="privateKey"
+                            type={showPrivateKey ? "text" : "password"}
+                            value={privateKey}
+                            onChange={(e) => setPrivateKey(e.target.value)}
+                            placeholder="Enter your wallet private key (0x...)"
+                            className="pl-10"
+                            disabled={processing}
+                          />
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setShowPrivateKey(!showPrivateKey)}
+                            className="absolute right-2 top-2 h-8 w-8 p-0"
+                          >
+                            {showPrivateKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                          </Button>
+                        </div>
+                        <div className="flex items-center justify-between mt-1">
+                          <p className="text-xs text-gray-500">
+                            Required for blockchain transactions
+                          </p>
+                          {privateKey && !isValidPrivateKey(privateKey) && (
+                            <p className="text-xs text-red-600">Invalid private key format</p>
+                          )}
+                        </div>
+                      </div>
+
+                      <Alert className="bg-red-50 border-red-200">
+                        <AlertTriangle className="h-4 w-4 text-red-600" />
+                        <AlertDescription className="text-red-700">
+                          ⚠️ WARNING: Never share your private key. This is for testing only. 
+                          In production, use MetaMask or a secure wallet provider.
+                        </AlertDescription>
+                      </Alert>
+                    </div>
+
                     {/* Current Status */}
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                       <Card>
@@ -574,10 +800,10 @@ const Audit = () => {
                     </Dialog>
 
                     {/* Action Buttons */}
-                    <div className="flex gap-4">
+                    <div className="flex flex-col md:flex-row gap-4">
                       <Button 
                         onClick={handleAuditSubmit}
-                        disabled={!file || processing}
+                        disabled={!file || processing || !privateKey || !isValidPrivateKey(privateKey)}
                         className="flex-1 h-12 text-lg bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700"
                       >
                         {processing ? (
@@ -588,9 +814,21 @@ const Audit = () => {
                         ) : (
                           <div className="flex items-center gap-2">
                             <Shield className="h-5 w-5" />
-                            Process Audit & Settle
+                            Process Audit via Backend
                           </div>
                         )}
+                      </Button>
+
+                      <Button 
+                        onClick={handleDirectRetire}
+                        disabled={processing || !privateKey || !isValidPrivateKey(privateKey) || companyData.status === 'audited'}
+                        variant="outline"
+                        className="flex-1 h-12 text-lg border-purple-600 text-purple-600 hover:bg-purple-50"
+                      >
+                        <div className="flex items-center gap-2">
+                          <Wallet className="h-5 w-5" />
+                          Direct Blockchain Retirement
+                        </div>
                       </Button>
                     </div>
                   </>
@@ -614,7 +852,7 @@ const Audit = () => {
                     <Alert className={
                       auditResult.blockchain_status === 'SUCCESS' 
                         ? 'bg-green-50 border-green-200' 
-                        : auditResult.blockchain_status === 'DEFICIT_LOCKED'
+                        : auditResult.status === 'DEFICIT'
                         ? 'bg-red-50 border-red-200'
                         : 'bg-yellow-50 border-yellow-200'
                     }>
@@ -624,14 +862,18 @@ const Audit = () => {
                         <AlertTriangle className="h-4 w-4 text-red-600" />
                       )}
                       <AlertTitle className={
-                        auditResult.blockchain_status === 'SUCCESS' ? 'text-green-700' : 'text-red-700'
+                        auditResult.blockchain_status === 'SUCCESS' ? 'text-green-700' : 
+                        auditResult.status === 'DEFICIT' ? 'text-red-700' : 'text-yellow-700'
                       }>
-                        {auditResult.status || 'Audit Complete'}
+                        {auditResult.status === 'DEFICIT' ? 'DEFICIT DETECTED' : 
+                         auditResult.blockchain_status === 'SUCCESS' ? 'SETTLEMENT SUCCESSFUL' : 
+                         'AUDIT COMPLETE'}
                       </AlertTitle>
                       <AlertDescription className={
-                        auditResult.blockchain_status === 'SUCCESS' ? 'text-green-700' : 'text-red-700'
+                        auditResult.blockchain_status === 'SUCCESS' ? 'text-green-700' : 
+                        auditResult.status === 'DEFICIT' ? 'text-red-700' : 'text-yellow-700'
                       }>
-                        {auditResult.message}
+                        {auditResult.message || 'Audit processing complete'}
                       </AlertDescription>
                     </Alert>
 
@@ -640,7 +882,7 @@ const Audit = () => {
                       <Card>
                         <CardContent className="pt-6">
                           <p className="text-sm text-gray-500 mb-2">Actual Consumption</p>
-                          <p className="text-2xl font-bold text-gray-900">{auditResult.actualConsumption} tons</p>
+                          <p className="text-2xl font-bold text-gray-900">{auditResult.actualConsumption || companyData.last_verified_consumption || 0} tons</p>
                         </CardContent>
                       </Card>
                       
@@ -648,7 +890,7 @@ const Audit = () => {
                         <CardContent className="pt-6">
                           <p className="text-sm text-gray-500 mb-2">Penalty Applied</p>
                           <p className="text-2xl font-bold text-red-700">
-                            {auditResult.penaltyApplied ? `${auditResult.penaltyTons.toFixed(1)} tons` : 'None'}
+                            {auditResult.penaltyApplied ? `${auditResult.penaltyTons?.toFixed(1) || 'Calculating'} tons` : 'None'}
                           </p>
                         </CardContent>
                       </Card>
@@ -656,7 +898,9 @@ const Audit = () => {
                       <Card>
                         <CardContent className="pt-6">
                           <p className="text-sm text-gray-500 mb-2">Total to Burn</p>
-                          <p className="text-2xl font-bold text-orange-700">{auditResult.totalRetirement.toFixed(1)} tons</p>
+                          <p className="text-2xl font-bold text-orange-700">
+                            {auditResult.totalRetirement?.toFixed(1) || auditResult.required_burn || 'Calculating'} tons
+                          </p>
                         </CardContent>
                       </Card>
                       
@@ -670,7 +914,7 @@ const Audit = () => {
                           <p className={`text-2xl font-bold ${
                             auditResult.surplus >= 0 ? 'text-green-700' : 'text-red-700'
                           }`}>
-                            {auditResult.surplus >= 0 ? '+' : ''}{auditResult.surplus.toFixed(1)} tons
+                            {auditResult.surplus >= 0 ? '+' : ''}{auditResult.surplus?.toFixed(1) || auditResult.net_surplus || 0} tons
                           </p>
                         </CardContent>
                       </Card>
@@ -698,7 +942,12 @@ const Audit = () => {
                               >
                                 Copy
                               </Button>
-                              <Button variant="outline" size="sm" className="gap-2">
+                              <Button 
+                                variant="outline" 
+                                size="sm" 
+                                className="gap-2"
+                                onClick={() => window.open(`https://sepolia.etherscan.io/tx/${auditResult.blockchain_tx}`, '_blank')}
+                              >
                                 View on Explorer
                                 <ExternalLink className="h-3 w-3" />
                               </Button>
@@ -742,13 +991,13 @@ const Audit = () => {
                           <div className="h-5 w-5 rounded-full bg-green-100 text-green-800 flex items-center justify-center flex-shrink-0">
                             ✓
                           </div>
-                          <span>Company: {auditResult.company}</span>
+                          <span>Company: {auditResult.company || companyData.company}</span>
                         </li>
                         <li className="flex items-start gap-2">
                           <div className="h-5 w-5 rounded-full bg-blue-100 text-blue-800 flex items-center justify-center flex-shrink-0">
                             📊
                           </div>
-                          <span>Blockchain Status: {auditResult.blockchain_status}</span>
+                          <span>Blockchain Status: {auditResult.blockchain_status || auditResult.status}</span>
                         </li>
                         <li className="flex items-start gap-2">
                           <div className="h-5 w-5 rounded-full bg-purple-100 text-purple-800 flex items-center justify-center flex-shrink-0">
